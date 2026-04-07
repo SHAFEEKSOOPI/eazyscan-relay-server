@@ -76,67 +76,63 @@ socket.on("desktop:register", (payload = {}) => {
 
   // ===== PAIR REQUEST =====
 socket.on("pair:request", (payload = {}) => {
-    const { sessionId, deviceId, deviceName } = payload;
 
-    const desktop = getDesktopBySession(sessionId);
-    if (!desktop) {
-      socket.emit("pair:response", { ok: false });
-      return;
-    }
+  const { sessionId, deviceId, deviceName } = payload;
 
-    const id = deviceId || socket.id;
-
-    if (rejected[id] && Date.now() - rejected[id] < 15000) {
+  const desktop = getDesktopBySession(sessionId);
+  if (!desktop) {
     socket.emit("pair:response", { ok: false });
     return;
-    }
+  }
 
-   
-    const existing = state.devices[id];
+  const id = deviceId || socket.id;
 
-    const finalName =
-      existing?.name || deviceName || "Mobile Device";
+  // 🔥 JOIN ROOM (IMPORTANT)
+  socket.join(id);
+
+  const existing = state.devices[id];
+
+  const finalName =
+    existing?.name || deviceName || "Mobile Device";
 
   if (existing) {
-  state.devices[id] = {
-    ...existing,
-    socketId: socket.id,
-    sessionId,
-    online: true,
-    lastSeen: Date.now()
-  };
+    // 🔥 DO NOT RESET APPROVAL
+    state.devices[id] = {
+      ...existing,
+      socketId: socket.id,
+      sessionId,
+      online: true,
+      lastSeen: Date.now()
+    };
+  } else {
+    state.devices[id] = {
+      id,
+      name: finalName,
+      socketId: socket.id,
+      sessionId,
+      approved: false,
+      online: true,
+      lastSeen: Date.now()
+    };
+  }
 
-} else {
-  state.devices[id] = {
-    id,
-    name: finalName,
-    socketId: socket.id,
-    sessionId,
-    approved: false,
-    online: true,
-    lastSeen: Date.now()
-  };
-}
+  if (state.devices[id].approved) {
+    socket.emit("pair:response", {
+      ok: true,
+      name: state.devices[id].name
+    });
+  } else {
+    socket.emit("pair:response", {
+      ok: false,
+      pending: true
+    });
+  }
 
- if (state.devices[id].approved) {
+  emitDevicesUpdate();
 
-  socket.emit("pair:response", {
-    ok: true,
-    name: state.devices[id].name
-  });
+  console.log("PAIR REQUEST:", id);
+});
 
-} else {
-
-  socket.emit("pair:response", {
-    ok: false,
-    pending: true
-  });
-
-}
-    emitDevicesUpdate();
-
-    console.log("PAIR REQUEST:", id);
-  });
 
   // ===== APPROVE =====
 
@@ -151,19 +147,9 @@ socket.on("device:approve", ({ deviceId }) => {
   state.activeDevice = deviceId;
 
   console.log("✅ DEVICE APPROVED:", deviceId);
-  console.log("📡 sending to socket:", dev.socketId);
 
-  
-  if (dev.socketId) {
-    io.to(dev.socketId).emit("pair:approved", {
-      ok: true,
-      deviceId,
-      name: dev.name
-    });
-  }
-
-  
-  socket.broadcast.emit("pair:approved", {
+  // 🔥 SEND TO DEVICE ROOM (100% RELIABLE)
+  io.to(deviceId).emit("pair:approved", {
     ok: true,
     deviceId,
     name: dev.name
@@ -171,6 +157,7 @@ socket.on("device:approve", ({ deviceId }) => {
 
   emitDevicesUpdate();
 });
+
 
   // ===== REJECT =====
   const rejected = {}; // add at top (global)
