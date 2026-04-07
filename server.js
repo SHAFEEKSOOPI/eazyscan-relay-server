@@ -56,7 +56,7 @@ io.on("connection", (socket) => {
   console.log("CLIENT CONNECTED:", socket.id);
 
   // ===== DESKTOP REGISTER =====
-  socket.on("desktop:register", (payload = {}) => {
+socket.on("desktop:register", (payload = {}) => {
     const desktopId = payload.desktopId || socket.id;
     const sessionId = crypto.randomBytes(16).toString("hex");
 
@@ -75,7 +75,7 @@ io.on("connection", (socket) => {
   });
 
   // ===== PAIR REQUEST =====
-  socket.on("pair:request", (payload = {}) => {
+socket.on("pair:request", (payload = {}) => {
     const { sessionId, deviceId, deviceName } = payload;
 
     const desktop = getDesktopBySession(sessionId);
@@ -91,14 +91,13 @@ io.on("connection", (socket) => {
     return;
     }
 
-    // ✅ KEEP EXISTING NAME (IMPORTANT FIX)
+   
     const existing = state.devices[id];
 
     const finalName =
       existing?.name || deviceName || "Mobile Device";
 
-    if (existing) {
-  // 🔥 UPDATE ONLY (DO NOT RESET APPROVAL)
+  if (existing) {
   state.devices[id] = {
     ...existing,
     socketId: socket.id,
@@ -108,7 +107,6 @@ io.on("connection", (socket) => {
   };
 
 } else {
-  // 🔥 NEW DEVICE
   state.devices[id] = {
     id,
     name: finalName,
@@ -153,8 +151,9 @@ socket.on("device:approve", ({ deviceId }) => {
   state.activeDevice = deviceId;
 
   console.log("✅ DEVICE APPROVED:", deviceId);
+  console.log("📡 sending to socket:", dev.socketId);
 
-  // 🔥 SEND EVENT TO MOBILE (THIS WAS MISSING)
+  
   if (dev.socketId) {
     io.to(dev.socketId).emit("pair:approved", {
       ok: true,
@@ -162,6 +161,13 @@ socket.on("device:approve", ({ deviceId }) => {
       name: dev.name
     });
   }
+
+  
+  socket.broadcast.emit("pair:approved", {
+    ok: true,
+    deviceId,
+    name: dev.name
+  });
 
   emitDevicesUpdate();
 });
@@ -187,7 +193,7 @@ socket.on("device:reject", ({ deviceId }) => {
 
 
   // ===== DISCONNECT =====
-  socket.on("device:disconnect", ({ deviceId }) => {
+socket.on("device:disconnect", ({ deviceId }) => {
     const dev = state.devices[deviceId];
     if (!dev) return;
 
@@ -205,7 +211,7 @@ socket.on("device:reject", ({ deviceId }) => {
   });
 
   // ===== RENAME =====
-  socket.on("device:rename", ({ deviceId, name }) => {
+socket.on("device:rename", ({ deviceId, name }) => {
     if (!state.devices[deviceId]) return;
 
     state.devices[deviceId].name = name;
@@ -214,7 +220,7 @@ socket.on("device:reject", ({ deviceId }) => {
   });
 
   // ===== REMOVE =====
-  socket.on("device:remove", ({ deviceId }) => {
+socket.on("device:remove", ({ deviceId }) => {
     delete state.devices[deviceId];
 
     if (state.activeDevice === deviceId) {
@@ -225,7 +231,7 @@ socket.on("device:reject", ({ deviceId }) => {
   });
 
   // ===== SCAN =====
-  socket.on("scan:barcode", (data = {}) => {
+socket.on("scan:barcode", (data = {}) => {
     const { barcode, sessionId, deviceId } = data;
 
     const desktop = getDesktopBySession(sessionId);
@@ -240,7 +246,7 @@ socket.on("device:reject", ({ deviceId }) => {
   });
 
   // ===== DISCONNECT SOCKET =====
-  socket.on("disconnect", () => {
+socket.on("disconnect", () => {
     const dev = Object.values(state.devices)
       .find(d => d.socketId === socket.id);
 
