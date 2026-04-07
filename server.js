@@ -86,6 +86,11 @@ io.on("connection", (socket) => {
 
     const id = deviceId || socket.id;
 
+    if (rejected[deviceId] && Date.now() - rejected[deviceId] < 15000) {
+    socket.emit("pair:response", { ok: false });
+    return;
+    }
+
     // ✅ KEEP EXISTING NAME (IMPORTANT FIX)
     const existing = state.devices[id];
 
@@ -114,19 +119,44 @@ io.on("connection", (socket) => {
 
   // ===== APPROVE =====
   socket.on("device:approve", ({ deviceId }) => {
-    if (!state.devices[deviceId]) return;
+  const dev = state.devices[deviceId];
+  if (!dev) return;
 
-    state.devices[deviceId].approved = true;
-    state.activeDevice = deviceId;
+  dev.approved = true;
+  state.activeDevice = deviceId;
 
-    emitDevicesUpdate();
-  });
+  // 🔥 SEND SUCCESS TO MOBILE
+  if (dev.socketId) {
+    io.to(dev.socketId).emit("pair:approved", {
+      ok: true,
+      deviceId,
+      name: dev.name
+    });
+  }
+
+  emitDevicesUpdate();
+});
+
 
   // ===== REJECT =====
-  socket.on("device:reject", ({ deviceId }) => {
-    delete state.devices[deviceId];
-    emitDevicesUpdate();
-  });
+  const rejected = {}; // add at top (global)
+
+socket.on("device:reject", ({ deviceId }) => {
+
+  const dev = state.devices[deviceId];
+
+  if (dev?.socketId) {
+    io.to(dev.socketId).emit("pair:rejected");
+  }
+
+  rejected[deviceId] = Date.now(); // block for some time
+
+  delete state.devices[deviceId];
+
+  emitDevicesUpdate();
+});
+
+
 
   // ===== DISCONNECT =====
   socket.on("device:disconnect", ({ deviceId }) => {
