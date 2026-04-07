@@ -23,6 +23,8 @@ const state = {
   activeDevice: null
 };
 
+// ================= HELPERS =================
+
 function emitDevicesUpdate() {
   const payload = {
     devices: state.devices,
@@ -42,22 +44,18 @@ function getDesktopBySession(sessionId) {
   );
 }
 
+// ================= ROUTES =================
+
 app.get("/", (req, res) => {
   res.send("EazyScan Relay Running");
 });
 
-app.get("/health", (req, res) => {
-  res.json({
-    ok: true,
-    desktops: Object.keys(state.desktops).length,
-    devices: Object.keys(state.devices).length
-  });
-});
+// ================= SOCKET =================
 
 io.on("connection", (socket) => {
   console.log("CLIENT CONNECTED:", socket.id);
 
-  // ================= DESKTOP REGISTER =================
+  // ===== DESKTOP REGISTER =====
   socket.on("desktop:register", (payload = {}) => {
     const desktopId = payload.desktopId || socket.id;
     const sessionId = crypto.randomBytes(16).toString("hex");
@@ -76,71 +74,61 @@ io.on("connection", (socket) => {
     console.log("DESKTOP REGISTERED:", sessionId);
   });
 
-  // ================= PAIR REQUEST =================
+  // ===== PAIR REQUEST =====
   socket.on("pair:request", (payload = {}) => {
-  const { sessionId, deviceId, deviceName } = payload;
+    const { sessionId, deviceId, deviceName } = payload;
 
-  console.log("PAIR REQUEST:", payload);
+    const desktop = getDesktopBySession(sessionId);
+    if (!desktop) {
+      socket.emit("pair:response", { ok: false });
+      return;
+    }
 
-  const desktop = getDesktopBySession(sessionId);
-  if (!desktop) {
-    socket.emit("pair:response", { ok: false });
-    return;
-  }
+    const id = deviceId || socket.id;
 
-  const id = deviceId || socket.id;
+    // ✅ KEEP EXISTING NAME (IMPORTANT FIX)
+    const existing = state.devices[id];
 
-  // ✅ IF DEVICE EXISTS → UPDATE (NO DUPLICATE)
-  if (state.devices[id]) {
-    state.devices[id] = {
-      ...state.devices[id],
-      socketId: socket.id,
-      sessionId,
-      online: true,
-      lastSeen: Date.now(),
-      name: deviceName || state.devices[id].name || "Mobile Device"
-    };
-  } else {
-    // ✅ NEW DEVICE
+    const finalName =
+      existing?.name || deviceName || "Mobile Device";
+
     state.devices[id] = {
       id,
+      name: finalName,
       socketId: socket.id,
       sessionId,
-      name: deviceName || "Mobile Device",
-      approved: true,
+      approved: false, // 🔥 REQUIRE APPROVAL
       online: true,
       lastSeen: Date.now()
     };
-  }
 
-  state.activeDevice = id;
+    socket.emit("pair:response", {
+      ok: false,
+      pending: true
+    });
 
-  socket.emit("pair:response", {
-    ok: true,
-    deviceId: id,
-    name: state.devices[id].name
+    emitDevicesUpdate();
+
+    console.log("PAIR REQUEST:", id);
   });
 
-  emitDevicesUpdate();
+  // ===== APPROVE =====
+  socket.on("device:approve", ({ deviceId }) => {
+    if (!state.devices[deviceId]) return;
 
-  console.log("DEVICE CONNECTED:", id);
-});
+    state.devices[deviceId].approved = true;
+    state.activeDevice = deviceId;
 
-  // ================= BARCODE =================
-  socket.on("scan:barcode", (data = {}) => {
-    const { barcode, sessionId } = data;
-
-    const desktop = getDesktopBySession(sessionId);
-    if (desktop?.socketId) {
-      io.to(desktop.socketId).emit("scan-received", {
-        barcode,
-        deviceId: data.deviceId,
-        at: new Date().toLocaleTimeString()
-      });
-    }
+    emitDevicesUpdate();
   });
 
-  // ================= DISCONNECT DEVICE =================
+  // ===== REJECT =====
+  socket.on("device:reject", ({ deviceId }) => {
+    delete state.devices[deviceId];
+    emitDevicesUpdate();
+  });
+
+  // ===== DISCONNECT =====
   socket.on("device:disconnect", ({ deviceId }) => {
     const dev = state.devices[deviceId];
     if (!dev) return;
@@ -158,7 +146,7 @@ io.on("connection", (socket) => {
     emitDevicesUpdate();
   });
 
-  // ================= RENAME =================
+  // ===== RENAME =====
   socket.on("device:rename", ({ deviceId, name }) => {
     if (!state.devices[deviceId]) return;
 
@@ -167,7 +155,7 @@ io.on("connection", (socket) => {
     emitDevicesUpdate();
   });
 
-  // ================= REMOVE =================
+  // ===== REMOVE =====
   socket.on("device:remove", ({ deviceId }) => {
     delete state.devices[deviceId];
 
@@ -178,10 +166,23 @@ io.on("connection", (socket) => {
     emitDevicesUpdate();
   });
 
-  // ================= SOCKET DISCONNECT =================
-  socket.on("disconnect", () => {
-    console.log("DISCONNECTED:", socket.id);
+  // ===== SCAN =====
+  socket.on("scan:barcode", (data = {}) => {
+    const { barcode, sessionId, deviceId } = data;
 
+    const desktop = getDesktopBySession(sessionId);
+
+    if (desktop?.socketId) {
+      io.to(desktop.socketId).emit("scan-received", {
+        barcode,
+        deviceId,
+        at: new Date().toLocaleTimeString()
+      });
+    }
+  });
+
+  // ===== DISCONNECT SOCKET =====
+  socket.on("disconnect", () => {
     const dev = Object.values(state.devices)
       .find(d => d.socketId === socket.id);
 
@@ -197,11 +198,10 @@ io.on("connection", (socket) => {
   });
 });
 
+// ================= START =================
 
 const PORT = process.env.PORT || 3210;
 
 server.listen(PORT, () => {
-  console.log("Relay server running on port " + PORT);
+  console.log("Relay running on port " + PORT);
 });
-
-
