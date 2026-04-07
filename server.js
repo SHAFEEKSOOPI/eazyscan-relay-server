@@ -86,16 +86,23 @@ io.on("connection", (socket) => {
 
     const id = deviceId || socket.id;
 
-    state.devices[id] = {
-      id,
-      socketId: socket.id,
-      sessionId,
-      approved: true
-    };
+  state.devices[id] = {
+  id,
+  socketId: socket.id,
+  sessionId,
+  name: payload.deviceName || "Mobile Device", // ✅ FIX
+  approved: true,
+  online: true, // ✅ FIX
+  lastSeen: Date.now()
+};
 
     state.activeDevice = id;
 
-    socket.emit("pair:response", { ok: true });
+  socket.emit("pair:response", {
+  ok: true,
+  deviceId: id,
+  name: state.devices[id].name
+});
 
     emitDevicesUpdate();
 
@@ -114,9 +121,47 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
-    console.log("DISCONNECTED:", socket.id);
-  });
+  console.log("DISCONNECTED:", socket.id);
+
+  const dev = Object.values(state.devices)
+    .find(d => d.socketId === socket.id);
+
+  if (dev) {
+    state.devices[dev.id] = {
+      ...dev,
+      socketId: null,
+      online: false
+    };
+
+    emitDevicesUpdate();
+  }
 });
+});
+
+socket.on("device:disconnect", ({ deviceId }) => {
+  const dev = state.devices[deviceId];
+  if (!dev) return;
+
+  if (dev.socketId) {
+    io.to(dev.socketId).emit("force:disconnect");
+  }
+
+  state.devices[deviceId].online = false;
+  state.devices[deviceId].socketId = null;
+
+  emitDevicesUpdate();
+});
+
+socket.on("device:remove", ({ deviceId }) => {
+  delete state.devices[deviceId];
+
+  if (state.activeDevice === deviceId) {
+    state.activeDevice = null;
+  }
+
+  emitDevicesUpdate();
+});
+
 
 const PORT = process.env.PORT || 3210;
 
