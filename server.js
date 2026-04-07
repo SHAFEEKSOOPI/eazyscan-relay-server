@@ -146,24 +146,22 @@ socket.on("device:approve", ({ deviceId }) => {
   if (!dev) return;
 
   dev.approved = true;
-  dev.online = true;
+
+  if (!state.trusted[deviceId] || typeof state.trusted[deviceId] !== "object") {
+    state.trusted[deviceId] = {};
+  }
+
+  if (state.devices[deviceId]?.name) {
+  state.trusted[deviceId].name = state.devices[deviceId].name;
+}
+  saveTrusted();
 
   state.activeDevice = deviceId;
 
-  console.log("✅ DEVICE APPROVED:", deviceId);
-
-  // 🔥 DELAY = ensures mobile joined room
-  setTimeout(() => {
-
-    io.to(deviceId).emit("pair:approved", {
-      ok: true,
-      deviceId,
-      name: dev.name
-    });
-
-    console.log("📡 APPROVAL SENT AFTER DELAY");
-
-  }, 300); // 👈 KEY FIX
+  if (dev.socketId) {
+    io.to(dev.socketId).emit("pair:approved");
+    io.to(dev.socketId).emit("pair:response", { ok: true, name: dev.name });
+  }
 
   emitDevicesUpdate();
 });
