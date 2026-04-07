@@ -86,7 +86,7 @@ io.on("connection", (socket) => {
 
     const id = deviceId || socket.id;
 
-    if (rejected[deviceId] && Date.now() - rejected[deviceId] < 15000) {
+    if (rejected[id] && Date.now() - rejected[id] < 15000) {
     socket.emit("pair:response", { ok: false });
     return;
     }
@@ -97,35 +97,64 @@ io.on("connection", (socket) => {
     const finalName =
       existing?.name || deviceName || "Mobile Device";
 
-    state.devices[id] = {
-      id,
-      name: finalName,
-      socketId: socket.id,
-      sessionId,
-      approved: false, // 🔥 REQUIRE APPROVAL
-      online: true,
-      lastSeen: Date.now()
-    };
+    if (existing) {
+  // 🔥 UPDATE ONLY (DO NOT RESET APPROVAL)
+  state.devices[id] = {
+    ...existing,
+    socketId: socket.id,
+    sessionId,
+    online: true,
+    lastSeen: Date.now()
+  };
 
-    socket.emit("pair:response", {
-      ok: false,
-      pending: true
-    });
+} else {
+  // 🔥 NEW DEVICE
+  state.devices[id] = {
+    id,
+    name: finalName,
+    socketId: socket.id,
+    sessionId,
+    approved: false,
+    online: true,
+    lastSeen: Date.now()
+  };
+}
 
+ if (state.devices[id].approved) {
+
+  socket.emit("pair:response", {
+    ok: true,
+    name: state.devices[id].name
+  });
+
+} else {
+
+  socket.emit("pair:response", {
+    ok: false,
+    pending: true
+  });
+
+}
     emitDevicesUpdate();
 
     console.log("PAIR REQUEST:", id);
   });
 
   // ===== APPROVE =====
-  socket.on("device:approve", ({ deviceId }) => {
+
+socket.on("device:approve", ({ deviceId }) => {
+
   const dev = state.devices[deviceId];
   if (!dev) return;
 
   dev.approved = true;
+  dev.online = true;
+
   state.activeDevice = deviceId;
 
-  // 🔥 SEND SUCCESS TO MOBILE
+  console.log("✅ DEVICE APPROVED:", deviceId);
+
+  // 🔥 SEND EVENT TO MOBILE (THIS WAS MISSING)
   if (dev.socketId) {
     io.to(dev.socketId).emit("pair:approved", {
       ok: true,
@@ -136,7 +165,6 @@ io.on("connection", (socket) => {
 
   emitDevicesUpdate();
 });
-
 
   // ===== REJECT =====
   const rejected = {}; // add at top (global)
