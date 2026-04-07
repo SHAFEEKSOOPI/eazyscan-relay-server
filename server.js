@@ -165,6 +165,15 @@ socket.on("device:approve", ({ deviceId }) => {
 });
 
 
+socket.on("pair:approved", (data) => {
+
+  CONNECTED = true;
+  suppressReconnect = false;
+
+  // 🔥 PREVENT DISCONNECT LOGIC
+  socket.io.opts.reconnection = false;
+
+});
 
   // ===== REJECT =====
   const rejected = {}; // add at top (global)
@@ -241,19 +250,26 @@ socket.on("scan:barcode", (data = {}) => {
 
   // ===== DISCONNECT SOCKET =====
 socket.on("disconnect", () => {
-    const dev = Object.values(state.devices)
-      .find(d => d.socketId === socket.id);
 
-    if (dev) {
-      state.devices[dev.id] = {
-        ...dev,
-        socketId: null,
-        online: false
-      };
+  const dev = Object.values(state.devices)
+    .find(d => d.socketId === socket.id);
 
-      emitDevicesUpdate();
-    }
-  });
+  if (!dev) return;
+
+  // 🔥 DO NOT RESET IF JUST APPROVED
+  if (dev.approved) {
+    console.log("⚠️ IGNORE DISCONNECT FOR APPROVED DEVICE:", dev.id);
+    return;
+  }
+
+  state.devices[dev.id] = {
+    ...state.devices[dev.id],
+    socketId: null,
+    online: false
+  };
+
+  emitDevicesUpdate();
+});
 });
 
 // ================= START =================
