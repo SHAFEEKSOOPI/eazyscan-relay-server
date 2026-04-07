@@ -138,10 +138,8 @@ socket.on("pair:request", (payload = {}) => {
 
 socket.on("device:approve", ({ deviceId }) => {
 
-  if (!dev) {
-    console.log("❌ APPROVE FAILED: device not found", deviceId);
-    return;
-  }
+  const dev = state.devices[deviceId];
+  if (!dev) return;
 
   dev.approved = true;
   dev.online = true;
@@ -150,20 +148,22 @@ socket.on("device:approve", ({ deviceId }) => {
 
   console.log("✅ DEVICE APPROVED:", deviceId);
 
-  const socketsInRoom = io.sockets.adapter.rooms.get(deviceId);
-  console.log("ROOM MEMBERS:", socketsInRoom);
+  // 🔥 DELAY = ensures mobile joined room
+  setTimeout(() => {
 
-  // 🔥 SEND TO DEVICE ROOM (100% RELIABLE)
-  io.to(deviceId).emit("pair:approved", {
-    ok: true,
-    deviceId,
-    name: dev.name
-  });
+    io.to(deviceId).emit("pair:approved", {
+      ok: true,
+      deviceId,
+      name: dev.name
+    });
 
-  console.log("📡 EVENT SENT TO ROOM:", deviceId);
+    console.log("📡 APPROVAL SENT AFTER DELAY");
+
+  }, 300); // 👈 KEY FIX
 
   emitDevicesUpdate();
 });
+
 
 
   // ===== REJECT =====
