@@ -23,6 +23,8 @@ const state = {
   activeDevice: null
 };
 
+
+
 // ================= HELPERS =================
 
 function emitDevicesUpdate() {
@@ -49,6 +51,8 @@ function getDesktopBySession(sessionId) {
 app.get("/", (req, res) => {
   res.send("EazyScan Relay Running");
 });
+
+const rejected = {};
 
 // ================= SOCKET =================
 
@@ -165,18 +169,8 @@ socket.on("device:approve", ({ deviceId }) => {
 });
 
 
-socket.on("pair:approved", (data) => {
-
-  CONNECTED = true;
-  suppressReconnect = false;
-
-  // 🔥 PREVENT DISCONNECT LOGIC
-  socket.io.opts.reconnection = false;
-
-});
 
   // ===== REJECT =====
-  const rejected = {}; // add at top (global)
 
 socket.on("device:reject", ({ deviceId }) => {
 
@@ -256,20 +250,31 @@ socket.on("disconnect", () => {
 
   if (!dev) return;
 
-  // 🔥 DO NOT RESET IF JUST APPROVED
-  if (dev.approved) {
-    console.log("⚠️ IGNORE DISCONNECT FOR APPROVED DEVICE:", dev.id);
-    return;
-  }
+  console.log("⚠️ SOCKET DISCONNECTED:", dev.id);
 
-  state.devices[dev.id] = {
-    ...state.devices[dev.id],
-    socketId: null,
-    online: false
-  };
+  // 🔥 DO NOT RESET IMMEDIATELY
+  setTimeout(() => {
 
-  emitDevicesUpdate();
+    const stillConnected = Object.values(state.devices)
+      .find(d => d.id === dev.id && d.socketId !== socket.id);
+
+    if (stillConnected) {
+      console.log("✅ Device reconnected, ignore disconnect");
+      return;
+    }
+
+    state.devices[dev.id] = {
+      ...state.devices[dev.id],
+      socketId: null,
+      online: false
+    };
+
+    emitDevicesUpdate();
+
+  }, 1000); // 👈 allow reconnect window
 });
+
+
 });
 
 // ================= START =================
