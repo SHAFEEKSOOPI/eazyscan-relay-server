@@ -78,16 +78,30 @@ io.on("connection", (socket) => {
 
   // ================= PAIR REQUEST =================
   socket.on("pair:request", (payload = {}) => {
-    const { sessionId, deviceId, deviceName } = payload;
+  const { sessionId, deviceId, deviceName } = payload;
 
-    const desktop = getDesktopBySession(sessionId);
-    if (!desktop) {
-      socket.emit("pair:response", { ok: false });
-      return;
-    }
+  console.log("PAIR REQUEST:", payload);
 
-    const id = deviceId || socket.id;
+  const desktop = getDesktopBySession(sessionId);
+  if (!desktop) {
+    socket.emit("pair:response", { ok: false });
+    return;
+  }
 
+  const id = deviceId || socket.id;
+
+  // ✅ IF DEVICE EXISTS → UPDATE (NO DUPLICATE)
+  if (state.devices[id]) {
+    state.devices[id] = {
+      ...state.devices[id],
+      socketId: socket.id,
+      sessionId,
+      online: true,
+      lastSeen: Date.now(),
+      name: deviceName || state.devices[id].name || "Mobile Device"
+    };
+  } else {
+    // ✅ NEW DEVICE
     state.devices[id] = {
       id,
       socketId: socket.id,
@@ -97,19 +111,20 @@ io.on("connection", (socket) => {
       online: true,
       lastSeen: Date.now()
     };
+  }
 
-    state.activeDevice = id;
+  state.activeDevice = id;
 
-    socket.emit("pair:response", {
-      ok: true,
-      deviceId: id,
-      name: state.devices[id].name
-    });
-
-    emitDevicesUpdate();
-
-    console.log("DEVICE CONNECTED:", id);
+  socket.emit("pair:response", {
+    ok: true,
+    deviceId: id,
+    name: state.devices[id].name
   });
+
+  emitDevicesUpdate();
+
+  console.log("DEVICE CONNECTED:", id);
+});
 
   // ================= BARCODE =================
   socket.on("scan:barcode", (data = {}) => {
