@@ -102,6 +102,8 @@ socket.on("pair:request", (payload = {}) => {
       online: true
     };
 
+    state.activeDevice = id;
+
     socket.emit("pair:response", { ok: true, name: existing.name });
 
     return;
@@ -120,7 +122,6 @@ socket.on("pair:request", (payload = {}) => {
 
   emitDevicesUpdate();
 });
-
 
 
 
