@@ -102,22 +102,64 @@ if (state.qrLocked) {
 
   const existing = state.devices[id];
 
-  const finalName = deviceName || "Mobile Device";
+let finalName = deviceName || "Mobile Device";
 
-state.devices[id] = {
-  id,
-  name: finalName,
-  socketId: socket.id,
-  sessionId,
-  approved: false,
-  online: true
-};
+if (existing) {
 
+  // 🔥 KEEP APPROVAL (VERY IMPORTANT)
+  if (existing.approved) {
+    console.log("✅ RECONNECTED APPROVED DEVICE:", id);
+
+    state.devices[id] = {
+      ...existing,
+      socketId: socket.id,
+      online: true
+    };
+
+    // ✅ SEND SUCCESS BACK
+    socket.emit("pair:response", {
+      ok: true,
+      name: existing.name
+    });
+
+    socket.emit("pair:approved", {
+      ok: true,
+      deviceId: id,
+      name: existing.name
+    });
+
+    emitDevicesUpdate();
+    return;
+  }
+
+  // pending device
+  state.devices[id] = {
+    ...existing,
+    socketId: socket.id,
+    sessionId,
+    online: true
+  };
+
+} else {
+
+  state.devices[id] = {
+    id,
+    name: finalName,
+    socketId: socket.id,
+    sessionId,
+    approved: false,
+    online: true
+  };
+}
+
+// pending response
 socket.emit("pair:response", { ok: false, pending: true });
 
-  emitDevicesUpdate();
+emitDevicesUpdate();
 
-  console.log("PAIR REQUEST:", id);
+console.log("PAIR REQUEST:", id);
+
+  
 });
 
 
@@ -129,23 +171,22 @@ socket.on("device:approve", ({ deviceId }) => {
   if (!dev) return;
 
   dev.approved = true;
-
-  if (!state.trusted[deviceId] || typeof state.trusted[deviceId] !== "object") {
-    state.trusted[deviceId] = {};
-  }
-
-  if (state.devices[deviceId]?.name) {
-  state.trusted[deviceId].name = state.devices[deviceId].name;
-}
-  
+  dev.online = true;
 
   state.activeDevice = deviceId;
 
   if (dev.socketId) {
-    io.to(dev.socketId).emit("pair:approved");
-    io.to(dev.socketId).emit("pair:response", { ok: true, name: dev.name });
-  }
+    io.to(dev.socketId).emit("pair:response", {
+      ok: true,
+      name: dev.name
+    });
 
+    io.to(dev.socketId).emit("pair:approved", {
+      ok: true,
+      deviceId,
+      name: dev.name
+    });
+  }
 
   emitDevicesUpdate();
 });
