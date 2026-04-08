@@ -102,41 +102,77 @@ if (state.qrLocked) {
 
   const existing = state.devices[id];
 
-  const finalName =
-    existing?.name || deviceName || "Mobile Device";
+  let trustedDevice = state.trusted[id];
 
-  if (existing) {
-    // 🔥 DO NOT RESET APPROVAL
-    state.devices[id] = {
-      ...existing,
-      socketId: socket.id,
-      sessionId,
-      online: true,
-      lastSeen: Date.now()
-    };
-  } else {
-    state.devices[id] = {
-      id,
-      name: finalName,
-      socketId: socket.id,
-      sessionId,
-      approved: false,
-      online: true,
-      lastSeen: Date.now()
-    };
+  // ✅ FIX OLD BOOLEAN STORAGE
+  if (trustedDevice === true) {
+    trustedDevice = {};
+    state.trusted[id] = trustedDevice;
+   
   }
 
-  if (state.devices[id].approved) {
-    socket.emit("pair:response", {
-      ok: true,
-      name: state.devices[id].name
-    });
-  } else {
-    socket.emit("pair:response", {
-      ok: false,
-      pending: true
-    });
+const isValidSession = sessionId && sessionId === state.sessionId;
+const isTrusted = !!trustedDevice;
+if (!isTrusted && !isValidSession) {
+    socket.emit("pair:response", { ok: false });
+    return;
   }
+
+  // ✅ ALLOW TRUSTED DEVICE WITHOUT SESSION
+  if (sessionId !== state.sessionId && !trustedDevice) {
+    socket.emit("pair:response", { ok: false });
+    return;
+  }
+
+// ✅ NAME RESOLUTION
+let finalName;
+
+if (trustedDevice && trustedDevice.name) {
+  finalName = trustedDevice.name;
+} else if (deviceName) {
+  finalName = deviceName;
+} else {
+  finalName = "New Device";
+}
+
+
+console.log("PAIR:", {
+  deviceId: id,
+  sessionId,
+  serverSession: state.sessionId,
+  trusted: !!trustedDevice
+});
+
+  // ✅ HANDLE MULTI CONNECTION
+  
+  if (existing && existing.socketId && existing.socketId !== socket.id) {
+    try {
+      io.to(existing.socketId).emit("force:disconnect");
+    } catch (e) {}
+  }
+
+  // ✅ SAVE DEVICE
+  state.devices[id] = {
+    id,
+    name: finalName,
+    socketId: socket.id,
+    approved: !!trustedDevice,
+    online: true
+  };
+
+  // ✅ RESPONSE
+  if (trustedDevice) {
+    state.activeDevice = id;
+    socket.emit("pair:response", { ok: true, name: finalName });
+  } else {
+    socket.emit("pair:response", { ok: false, pending: true });
+  }
+
+  if (!state.activeDevice) {
+    state.activeDevice = id;
+  }
+
+
   emitDevicesUpdate();
 
   console.log("PAIR REQUEST:", id);
