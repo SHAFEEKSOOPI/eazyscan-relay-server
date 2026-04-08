@@ -82,11 +82,6 @@ socket.on("desktop:register", (payload = {}) => {
   // ===== PAIR REQUEST =====
 socket.on("pair:request", (payload = {}) => {
 
-if (state.qrLocked) {
-    socket.emit("pair:response", { ok: false });
-    return;
-  }
-
   const { sessionId, deviceId, deviceName } = payload;
 
   const desktop = getDesktopBySession(sessionId);
@@ -97,25 +92,9 @@ if (state.qrLocked) {
 
   const id = deviceId || socket.id;
 
-  // 🔥 JOIN ROOM (IMPORTANT)
-  socket.join(id);
-
   const existing = state.devices[id];
 
-let finalName = deviceName || "Mobile Device";
-
-if (existing) {
-
-  // 🔥 KEEP APPROVAL (VERY IMPORTANT)
-  if (existing.approved) {
-    console.log("✅ RECONNECTED APPROVED DEVICE:", id);
-
-   state.devices[id] = {
-    ...state.devices[id],
-    socketId: socket.id,
-    online: true
-   };
-
+  if (existing && existing.approved) {
 
     state.devices[id] = {
       ...existing,
@@ -123,51 +102,26 @@ if (existing) {
       online: true
     };
 
-    // ✅ SEND SUCCESS BACK
-    socket.emit("pair:response", {
-      ok: true,
-      name: existing.name
-    });
+    socket.emit("pair:response", { ok: true, name: existing.name });
 
-    socket.emit("pair:approved", {
-      ok: true,
-      deviceId: id,
-      name: existing.name
-    });
-
-    emitDevicesUpdate();
     return;
   }
 
-  // pending device
-  state.devices[id] = {
-    ...existing,
-    socketId: socket.id,
-    sessionId,
-    online: true
-  };
-
-} else {
-
   state.devices[id] = {
     id,
-    name: finalName,
+    name: deviceName || "Mobile Device",
     socketId: socket.id,
     sessionId,
     approved: false,
     online: true
   };
-}
 
-// pending response
-socket.emit("pair:response", { ok: false, pending: true });
+  socket.emit("pair:response", { ok: false, pending: true });
 
-emitDevicesUpdate();
-
-console.log("PAIR REQUEST:", id);
-
-  
+  emitDevicesUpdate();
 });
+
+
 
 
   // ===== APPROVE =====
@@ -182,24 +136,13 @@ socket.on("device:approve", ({ deviceId }) => {
 
   state.activeDevice = deviceId;
 
-  state.qrLocked = true; // 🔥 CRITICAL FIX
-
   if (dev.socketId) {
-    io.to(dev.socketId).emit("pair:approved", {
-      ok: true,
-      deviceId,
-      name: dev.name
-    });
-
-    io.to(dev.socketId).emit("pair:response", {
-      ok: true,
-      name: dev.name
-    });
+    io.to(dev.socketId).emit("pair:approved");
+    io.to(dev.socketId).emit("pair:response", { ok: true });
   }
 
   emitDevicesUpdate();
 });
-
 
 
   // ===== REJECT =====
@@ -259,13 +202,6 @@ socket.on("device:rename", ({ deviceId, name }) => {
   }
 
 
-if (!state.trusted[deviceId] || typeof state.trusted[deviceId] !== "object") {
-    state.trusted[deviceId] = {};
-  }
-
-// ===== confuse =====
-  state.trusted[deviceId].name = name; 
-
     emitDevicesUpdate();
   });
 
@@ -278,8 +214,7 @@ socket.on("device:remove", ({ deviceId }) => {
   }
 
   delete state.devices[deviceId];
-  delete state.trusted[deviceId];
-
+  
   
     emitDevicesUpdate();
     return { ok: true };
