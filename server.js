@@ -182,15 +182,17 @@ socket.on("device:approve", ({ deviceId }) => {
 
   state.activeDevice = deviceId;
 
-  if (dev.socketId) {
-    io.to(dev.socketId).emit("pair:response", {
-      ok: true,
-      name: dev.name
-    });
+  state.qrLocked = true; // 🔥 CRITICAL FIX
 
+  if (dev.socketId) {
     io.to(dev.socketId).emit("pair:approved", {
       ok: true,
       deviceId,
+      name: dev.name
+    });
+
+    io.to(dev.socketId).emit("pair:response", {
+      ok: true,
       name: dev.name
     });
   }
