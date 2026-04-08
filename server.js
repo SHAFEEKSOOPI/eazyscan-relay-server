@@ -110,6 +110,13 @@ if (existing) {
   if (existing.approved) {
     console.log("✅ RECONNECTED APPROVED DEVICE:", id);
 
+   state.devices[id] = {
+    ...state.devices[id],
+    socketId: socket.id,
+    online: true
+   };
+
+
     state.devices[id] = {
       ...existing,
       socketId: socket.id,
@@ -300,21 +307,28 @@ socket.on("disconnect", () => {
 
   if (!dev) return;
 
-  state.devices[dev.id] = {
-    ...state.devices[dev.id],
-    socketId: null,
-    online: false
-  };
+  console.log("⚠️ DISCONNECT:", dev.id);
 
-if (state.activeDevice === dev.id) {
-    const onlineApproved = Object.values(state.devices)
-      .find(d => d.approved && d.online);
+  // 🔥 DO NOT MARK OFFLINE IMMEDIATELY
+  setTimeout(() => {
 
-    state.activeDevice = onlineApproved ? onlineApproved.id : null;
-  }
+    const stillConnected = Object.values(state.devices)
+      .find(d => d.id === dev.id && d.socketId !== socket.id);
+
+    if (stillConnected) {
+      console.log("✅ Reconnected, ignore disconnect:", dev.id);
+      return;
+    }
+
+    state.devices[dev.id] = {
+      ...state.devices[dev.id],
+      socketId: null,
+      online: false
+    };
+
     emitDevicesUpdate();
 
- 
+  }, 1500); // 👈 VERY IMPORTANT
 });
 
 
