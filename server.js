@@ -81,6 +81,11 @@ socket.on("desktop:register", (payload = {}) => {
   // ===== PAIR REQUEST =====
 socket.on("pair:request", (payload = {}) => {
 
+if (state.qrLocked) {
+    socket.emit("pair:response", { ok: false });
+    return;
+  }
+
   const { sessionId, deviceId, deviceName } = payload;
 
   const desktop = getDesktopBySession(sessionId);
@@ -96,41 +101,76 @@ socket.on("pair:request", (payload = {}) => {
 
   const existing = state.devices[id];
 
-  const finalName =
-    existing?.name || deviceName || "Mobile Device";
+  let trustedDevice = state.trusted[id];
 
-  if (existing) {
-    // 🔥 DO NOT RESET APPROVAL
-    state.devices[id] = {
-      ...existing,
-      socketId: socket.id,
-      sessionId,
-      online: true,
-      lastSeen: Date.now()
-    };
-  } else {
-    state.devices[id] = {
-      id,
-      name: finalName,
-      socketId: socket.id,
-      sessionId,
-      approved: false,
-      online: true,
-      lastSeen: Date.now()
-    };
+  // ✅ FIX OLD BOOLEAN STORAGE
+  if (trustedDevice === true) {
+    trustedDevice = {};
+    state.trusted[id] = trustedDevice;
+    saveTrusted();
   }
 
-  if (state.devices[id].approved) {
-    socket.emit("pair:response", {
-      ok: true,
-      name: state.devices[id].name
-    });
-  } else {
-    socket.emit("pair:response", {
-      ok: false,
-      pending: true
-    });
+const isValidSession = sessionId && sessionId === state.sessionId;
+const isTrusted = !!trustedDevice;
+if (!isTrusted && !isValidSession) {
+    socket.emit("pair:response", { ok: false });
+    return;
   }
+
+  // ✅ ALLOW TRUSTED DEVICE WITHOUT SESSION
+  if (sessionId !== state.sessionId && !trustedDevice) {
+    socket.emit("pair:response", { ok: false });
+    return;
+  }
+
+// ✅ NAME RESOLUTION
+let finalName;
+
+if (trustedDevice && trustedDevice.name) {
+  finalName = trustedDevice.name;
+} else if (deviceName) {
+  finalName = deviceName;
+} else {
+  finalName = "New Device";
+}
+
+
+console.log("PAIR:", {
+  deviceId: id,
+  sessionId,
+  serverSession: state.sessionId,
+  trusted: !!trustedDevice
+});
+
+  // ✅ HANDLE MULTI CONNECTION
+  
+  if (existing && existing.socketId && existing.socketId !== socket.id) {
+    try {
+      io.to(existing.socketId).emit("force:disconnect");
+    } catch (e) {}
+  }
+
+  // ✅ SAVE DEVICE
+  state.devices[id] = {
+    id,
+    name: finalName,
+    socketId: socket.id,
+    approved: !!trustedDevice,
+    online: true
+  };
+
+  // ✅ RESPONSE
+  if (trustedDevice) {
+    state.activeDevice = id;
+    socket.emit("pair:response", { ok: true, name: finalName });
+  } else {
+    socket.emit("pair:response", { ok: false, pending: true });
+  }
+
+  if (!state.activeDevice) {
+    state.activeDevice = id;
+  }
+
 
   emitDevicesUpdate();
 
@@ -163,6 +203,7 @@ socket.on("device:approve", ({ deviceId }) => {
     io.to(dev.socketId).emit("pair:response", { ok: true, name: dev.name });
   }
 
+
   emitDevicesUpdate();
 });
 
@@ -173,14 +214,17 @@ socket.on("device:approve", ({ deviceId }) => {
 socket.on("device:reject", ({ deviceId }) => {
 
   const dev = state.devices[deviceId];
+  if (!dev) return;
 
-  if (dev?.socketId) {
-    io.to(dev.socketId).emit("pair:rejected");
-  }
-
-  rejected[deviceId] = Date.now(); // block for some time
+  io.to(dev.socketId).emit("pair:rejected");
 
   delete state.devices[deviceId];
+  delete state.available[deviceId];
+
+
+  if (state.activeDevice === deviceId) {
+    state.activeDevice = Object.keys(state.devices)[0] || null;
+  }
 
   emitDevicesUpdate();
 });
@@ -190,39 +234,66 @@ socket.on("device:reject", ({ deviceId }) => {
   // ===== DISCONNECT =====
 socket.on("device:disconnect", ({ deviceId }) => {
     const dev = state.devices[deviceId];
-    if (!dev) return;
+  if (!dev) return;
 
-    if (dev.socketId) {
-      io.to(dev.socketId).emit("force:disconnect");
-    }
+  if (dev.socketId) {
+    io.to(dev.socketId).emit("force:disconnect");
+  }
 
-    state.devices[deviceId] = {
-      ...dev,
-      socketId: null,
-      online: false
-    };
+  state.devices[deviceId] = {
+    ...dev,
+    socketId: null,
+    online: false,
+    approved: true
+  };
 
+  saveTrusted();
+
+  if (state.activeDevice === deviceId) {
+    const onlineApproved = Object.values(state.devices)
+      .find(d => d.approved && d.online);
+
+    state.activeDevice = onlineApproved ? onlineApproved.id : null;
+  }
     emitDevicesUpdate();
   });
 
   // ===== RENAME =====
 socket.on("device:rename", ({ deviceId, name }) => {
-    if (!state.devices[deviceId]) return;
+    if (!deviceId || !name) return;
 
+  if (state.devices[deviceId]) {
     state.devices[deviceId].name = name;
+  }
+
+  if (state.available[deviceId]) {
+    state.available[deviceId].name = name;
+  }
+
+if (!state.trusted[deviceId] || typeof state.trusted[deviceId] !== "object") {
+    state.trusted[deviceId] = {};
+  }
+
+  state.trusted[deviceId].name = name;  saveTrusted();
 
     emitDevicesUpdate();
   });
 
   // ===== REMOVE =====
 socket.on("device:remove", ({ deviceId }) => {
-    delete state.devices[deviceId];
+    const dev = state.devices[deviceId];
 
-    if (state.activeDevice === deviceId) {
-      state.activeDevice = null;
-    }
+  if (dev?.socketId) {
+    io.to(dev.socketId).emit("force:disconnect");
+  }
 
+  delete state.devices[deviceId];
+  delete state.trusted[deviceId];
+
+  saveTrusted();
     emitDevicesUpdate();
+    return { ok: true };
+
   });
 
   // ===== SCAN =====
@@ -248,28 +319,21 @@ socket.on("disconnect", () => {
 
   if (!dev) return;
 
-  console.log("⚠️ SOCKET DISCONNECTED:", dev.id);
+  state.devices[dev.id] = {
+    ...state.devices[dev.id],
+    socketId: null,
+    online: false
+  };
 
-  // 🔥 DO NOT RESET IMMEDIATELY
-  setTimeout(() => {
+if (state.activeDevice === dev.id) {
+    const onlineApproved = Object.values(state.devices)
+      .find(d => d.approved && d.online);
 
-    const stillConnected = Object.values(state.devices)
-      .find(d => d.id === dev.id && d.socketId !== socket.id);
-
-    if (stillConnected) {
-      console.log("✅ Device reconnected, ignore disconnect");
-      return;
-    }
-
-    state.devices[dev.id] = {
-      ...state.devices[dev.id],
-      socketId: null,
-      online: false
-    };
-
+    state.activeDevice = onlineApproved ? onlineApproved.id : null;
+  }
     emitDevicesUpdate();
 
-  }, 1000); // 👈 allow reconnect window
+ 
 });
 
 
