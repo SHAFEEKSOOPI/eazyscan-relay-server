@@ -83,22 +83,23 @@ socket.on("desktop:register", (payload = {}) => {
 socket.on("pair:request", (payload = {}) => {
   const { sessionId, deviceId, deviceName } = payload;
 
-  const desktop = getDesktopBySession(sessionId);
-  if (!desktop) {
-    socket.emit("pair:response", { ok: false });
-    return;
-  }
-
   const id = deviceId || socket.id;
   const existing = state.devices[id];
 
-  // approved reconnect
+  // find any currently connected desktop
+  const currentDesktop = Object.values(state.desktops).find(d => d.socketId);
+
+  // ✅ approved device can reconnect even if old session is stale
   if (existing && existing.approved) {
+    if (!currentDesktop) {
+      socket.emit("pair:response", { ok: false });
+      return;
+    }
+
     state.devices[id] = {
       ...existing,
       socketId: socket.id,
-      sessionId,
-      approved: true,
+      sessionId: currentDesktop.sessionId,
       online: true,
       lastSeen: Date.now()
     };
@@ -115,10 +116,16 @@ socket.on("pair:request", (payload = {}) => {
     return;
   }
 
-  // first-time / pending device
+  // first-time device still needs valid QR session
+  const desktop = getDesktopBySession(sessionId);
+  if (!desktop) {
+    socket.emit("pair:response", { ok: false });
+    return;
+  }
+
   state.devices[id] = {
     id,
-    name: existing?.name || deviceName || "Mobile Device",
+    name: deviceName || "Mobile Device",
     socketId: socket.id,
     sessionId,
     approved: false,
@@ -135,21 +142,21 @@ socket.on("pair:request", (payload = {}) => {
   console.log("PAIR REQUEST:", id, state.devices[id]);
 });
 
+
   // ===== APPROVE =====
 
 socket.on("device:approve", ({ deviceId }) => {
-
   const dev = state.devices[deviceId];
   if (!dev) return;
 
   dev.approved = true;
   dev.online = true;
-
+  dev.lastSeen = Date.now();
   state.activeDevice = deviceId;
 
   if (dev.socketId) {
-    io.to(dev.socketId).emit("pair:approved");
-    io.to(dev.socketId).emit("pair:response", { ok: true });
+    io.to(dev.socketId).emit("pair:approved", { ok: true, name: dev.name });
+    io.to(dev.socketId).emit("pair:response", { ok: true, name: dev.name });
   }
 
   emitDevicesUpdate();
