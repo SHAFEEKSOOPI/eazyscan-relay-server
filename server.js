@@ -241,18 +241,29 @@ socket.on("device:remove", ({ deviceId }) => {
 
   // ===== SCAN =====
 socket.on("scan:barcode", (data = {}) => {
-    const { barcode, sessionId, deviceId } = data;
+  const { barcode, deviceId } = data;
 
-    const desktop = getDesktopBySession(sessionId);
+  const dev = state.devices[deviceId];
 
-    if (desktop?.socketId) {
-      io.to(desktop.socketId).emit("scan-received", {
+  // ✅ Only allow approved devices
+  if (!dev || !dev.approved) {
+    console.log("❌ Scan rejected (not approved):", deviceId);
+    return;
+  }
+
+  console.log("📦 SCAN RECEIVED FROM:", deviceId, barcode);
+
+  // ✅ Send to ALL desktops
+  Object.values(state.desktops).forEach((desk) => {
+    if (desk.socketId) {
+      io.to(desk.socketId).emit("scan-received", {
         barcode,
         deviceId,
         at: new Date().toLocaleTimeString()
       });
     }
   });
+});
 
   // ===== DISCONNECT SOCKET =====
 socket.on("disconnect", () => {
