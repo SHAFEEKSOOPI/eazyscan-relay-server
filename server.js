@@ -81,7 +81,6 @@ socket.on("desktop:register", (payload = {}) => {
 
   // ===== PAIR REQUEST =====
 socket.on("pair:request", (payload = {}) => {
-
   const { sessionId, deviceId, deviceName } = payload;
 
   const desktop = getDesktopBySession(sessionId);
@@ -91,37 +90,50 @@ socket.on("pair:request", (payload = {}) => {
   }
 
   const id = deviceId || socket.id;
-
   const existing = state.devices[id];
 
+  // approved reconnect
   if (existing && existing.approved) {
-
     state.devices[id] = {
       ...existing,
       socketId: socket.id,
-      online: true
+      sessionId,
+      approved: true,
+      online: true,
+      lastSeen: Date.now()
     };
 
-    socket.emit("pair:response", { ok: true, name: existing.name });
+    state.activeDevice = id;
 
+    socket.emit("pair:response", {
+      ok: true,
+      name: state.devices[id].name
+    });
+
+    emitDevicesUpdate();
+    console.log("RECONNECTED APPROVED DEVICE:", id, state.devices[id]);
     return;
   }
 
+  // first-time / pending device
   state.devices[id] = {
     id,
-    name: deviceName || "Mobile Device",
+    name: existing?.name || deviceName || "Mobile Device",
     socketId: socket.id,
     sessionId,
     approved: false,
-    online: true
+    online: true,
+    lastSeen: Date.now()
   };
 
-  socket.emit("pair:response", { ok: false, pending: true });
+  socket.emit("pair:response", {
+    ok: false,
+    pending: true
+  });
 
   emitDevicesUpdate();
+  console.log("PAIR REQUEST:", id, state.devices[id]);
 });
-
-
 
   // ===== APPROVE =====
 
@@ -167,7 +179,7 @@ socket.on("device:reject", ({ deviceId }) => {
 
   // ===== DISCONNECT =====
 socket.on("device:disconnect", ({ deviceId }) => {
-    const dev = state.devices[deviceId];
+  const dev = state.devices[deviceId];
   if (!dev) return;
 
   if (dev.socketId) {
@@ -181,16 +193,16 @@ socket.on("device:disconnect", ({ deviceId }) => {
     approved: true
   };
 
-  
-
   if (state.activeDevice === deviceId) {
     const onlineApproved = Object.values(state.devices)
       .find(d => d.approved && d.online);
 
     state.activeDevice = onlineApproved ? onlineApproved.id : null;
   }
-    emitDevicesUpdate();
-  });
+
+  emitDevicesUpdate();
+  console.log("DEVICE DISCONNECTED:", deviceId, state.devices[deviceId]);
+});
 
   // ===== RENAME =====
 socket.on("device:rename", ({ deviceId, name }) => {
@@ -237,36 +249,38 @@ socket.on("scan:barcode", (data = {}) => {
 
   // ===== DISCONNECT SOCKET =====
 socket.on("disconnect", () => {
-
-  const dev = Object.values(state.devices)
-    .find(d => d.socketId === socket.id);
-
+  const dev = Object.values(state.devices).find(d => d.socketId === socket.id);
   if (!dev) return;
 
-  console.log("⚠️ DISCONNECT:", dev.id);
+  console.log("SOCKET DISCONNECT:", dev.id, socket.id);
 
-  // 🔥 DO NOT MARK OFFLINE IMMEDIATELY
   setTimeout(() => {
+    const latest = state.devices[dev.id];
+    if (!latest) return;
 
-    const stillConnected = Object.values(state.devices)
-      .find(d => d.id === dev.id && d.socketId !== socket.id);
-
-    if (stillConnected) {
-      console.log("✅ Reconnected, ignore disconnect:", dev.id);
+    // ignore if same device already reconnected with a new socket
+    if (latest.socketId && latest.socketId !== socket.id) {
+      console.log("IGNORE OLD DISCONNECT:", dev.id);
       return;
     }
 
     state.devices[dev.id] = {
-      ...state.devices[dev.id],
+      ...latest,
       socketId: null,
       online: false
     };
 
+    if (state.activeDevice === dev.id) {
+      const onlineApproved = Object.values(state.devices)
+        .find(d => d.approved && d.online);
+
+      state.activeDevice = onlineApproved ? onlineApproved.id : null;
+    }
+
     emitDevicesUpdate();
-
-  }, 1500); // 👈 VERY IMPORTANT
+    console.log("MARKED OFFLINE:", dev.id, state.devices[dev.id]);
+  }, 1500);
 });
-
 
 });
 
