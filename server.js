@@ -80,27 +80,29 @@ socket.on("desktop:register", (payload = {}) => {
     console.log("DESKTOP REGISTERED:", sessionId);
   });
 
-  // ===== PAIR REQUEST =====
+// ===== PAIR REQUEST =====
 socket.on("pair:request", (payload = {}) => {
   const { sessionId, deviceId, deviceName } = payload;
 
   const id = deviceId || socket.id;
   const existing = state.devices[id];
 
-  // find any currently connected desktop
+  // Find any currently connected desktop
   const currentDesktop = Object.values(state.desktops).find(d => d.socketId);
 
-  // ✅ approved device can reconnect even if old session is stale
+  // ✅ Approved device can reconnect even if old session is stale
   if (existing && existing.approved) {
     if (!currentDesktop) {
-      socket.emit("pair:response", { ok: false });
+      socket.emit("pair:response", { ok: false, reason: "no-desktop" });
       return;
     }
 
     state.devices[id] = {
       ...existing,
+      name: existing.name || deviceName || "Mobile Device",
       socketId: socket.id,
       sessionId: currentDesktop.sessionId,
+      desktopId: currentDesktop.id,
       online: true,
       lastSeen: Date.now()
     };
@@ -117,18 +119,19 @@ socket.on("pair:request", (payload = {}) => {
     return;
   }
 
-  // first-time device still needs valid QR session
+  // ✅ First-time device still needs valid QR session
   const desktop = getDesktopBySession(sessionId);
   if (!desktop) {
-    socket.emit("pair:response", { ok: false });
+    socket.emit("pair:response", { ok: false, reason: "invalid-session" });
     return;
   }
 
   state.devices[id] = {
     id,
-    name: deviceName || "Mobile Device",
+    name: existing?.name || deviceName || "Mobile Device",
     socketId: socket.id,
     sessionId,
+    desktopId: desktop.id,
     approved: false,
     online: true,
     lastSeen: Date.now()
@@ -144,8 +147,7 @@ socket.on("pair:request", (payload = {}) => {
 });
 
 
-  // ===== APPROVE =====
-
+// ===== APPROVE =====
 socket.on("device:approve", ({ deviceId }) => {
   const dev = state.devices[deviceId];
   if (!dev) return;
@@ -156,34 +158,44 @@ socket.on("device:approve", ({ deviceId }) => {
   state.activeDevice = deviceId;
 
   if (dev.socketId) {
-    io.to(dev.socketId).emit("pair:approved", { ok: true, name: dev.name });
-    io.to(dev.socketId).emit("pair:response", { ok: true, name: dev.name });
+    io.to(dev.socketId).emit("pair:approved", {
+      ok: true,
+      name: dev.name
+    });
+
+    // Backward compatibility
+    io.to(dev.socketId).emit("pair:response", {
+      ok: true,
+      name: dev.name
+    });
   }
 
   emitDevicesUpdate();
+  console.log("DEVICE APPROVED:", deviceId);
 });
 
 
-  // ===== REJECT =====
 
+// ===== REJECT =====
 socket.on("device:reject", ({ deviceId }) => {
-
   const dev = state.devices[deviceId];
   if (!dev) return;
 
-  io.to(dev.socketId).emit("pair:rejected");
+  if (dev.socketId) {
+    io.to(dev.socketId).emit("pair:rejected");
+  }
 
   delete state.devices[deviceId];
 
+  // Select the next approved and online device as active
+  const nextActive = Object.values(state.devices)
+    .find(d => d.approved && d.online);
 
-  if (state.activeDevice === deviceId) {
-    state.activeDevice = Object.keys(state.devices)[0] || null;
-  }
+  state.activeDevice = nextActive ? nextActive.id : null;
 
   emitDevicesUpdate();
+  console.log("DEVICE REJECTED:", deviceId);
 });
-
-
 
   // ===== DISCONNECT =====
 socket.on("device:disconnect", ({ deviceId }) => {
@@ -224,21 +236,28 @@ socket.on("device:rename", ({ deviceId, name }) => {
     emitDevicesUpdate();
   });
 
-  // ===== REMOVE =====
+ // ===== DEVICE REMOVE =====
 socket.on("device:remove", ({ deviceId }) => {
-    const dev = state.devices[deviceId];
+  const dev = state.devices[deviceId];
+  if (!dev) return;
 
-  if (dev?.socketId) {
-    io.to(dev.socketId).emit("force:disconnect");
+  // Notify the mobile device that it has been removed
+  if (dev.socketId) {
+    io.to(dev.socketId).emit("pair:rejected");
   }
 
+  // Remove the device from the server state
   delete state.devices[deviceId];
-  
-  
-    emitDevicesUpdate();
-    return { ok: true };
 
-  });
+  // Update active device selection
+  const nextActive = Object.values(state.devices)
+    .find(d => d.approved && d.online);
+
+  state.activeDevice = nextActive ? nextActive.id : null;
+
+  emitDevicesUpdate();
+  console.log("DEVICE REMOVED:", deviceId);
+});
 
   // ===== SCAN =====
 socket.on("scan:barcode", (data = {}) => {
