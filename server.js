@@ -25,9 +25,32 @@ const state = {
   trusted: {}
 };
 
-
+const fs = require("fs");
+const path = require("path");
 
 // ================= HELPERS =================
+function loadDevices() {
+  try {
+    if (fs.existsSync(DEVICES_FILE)) {
+      return JSON.parse(fs.readFileSync(DEVICES_FILE, "utf8"));
+    }
+  } catch (err) {
+    console.error("Error loading devices:", err);
+  }
+  return {};
+}
+
+
+function saveDevices() {
+  try {
+    fs.writeFileSync(
+      DEVICES_FILE,
+      JSON.stringify(state.devices, null, 2)
+    );
+  } catch (err) {
+    console.error("Error saving devices:", err);
+  }
+}
 
 function emitDevicesUpdate() {
   const payload = {
@@ -87,10 +110,8 @@ socket.on("pair:request", (payload = {}) => {
   const id = deviceId || socket.id;
   const existing = state.devices[id];
 
-  // Find any currently connected desktop
   const currentDesktop = Object.values(state.desktops).find(d => d.socketId);
 
-  // ✅ Approved device can reconnect even if old session is stale
   if (existing && existing.approved) {
     if (!currentDesktop) {
       socket.emit("pair:response", { ok: false, reason: "no-desktop" });
@@ -106,7 +127,7 @@ socket.on("pair:request", (payload = {}) => {
       online: true,
       lastSeen: Date.now()
     };
-
+    
     state.activeDevice = id;
 
     socket.emit("pair:response", {
@@ -119,7 +140,6 @@ socket.on("pair:request", (payload = {}) => {
     return;
   }
 
-  // ✅ First-time device still needs valid QR session
   const desktop = getDesktopBySession(sessionId);
   if (!desktop) {
     socket.emit("pair:response", { ok: false, reason: "invalid-session" });
@@ -136,6 +156,8 @@ socket.on("pair:request", (payload = {}) => {
     online: true,
     lastSeen: Date.now()
   };
+
+  saveDevices();
 
   socket.emit("pair:response", {
     ok: false,
@@ -156,6 +178,8 @@ socket.on("device:approve", ({ deviceId }) => {
   dev.online = true;
   dev.lastSeen = Date.now();
   state.activeDevice = deviceId;
+  
+  saveDevices();
 
   if (dev.socketId) {
     io.to(dev.socketId).emit("pair:approved", {
@@ -163,7 +187,6 @@ socket.on("device:approve", ({ deviceId }) => {
       name: dev.name
     });
 
-    // Backward compatibility
     io.to(dev.socketId).emit("pair:response", {
       ok: true,
       name: dev.name
@@ -187,7 +210,6 @@ socket.on("device:reject", ({ deviceId }) => {
 
   delete state.devices[deviceId];
 
-  // Select the next approved and online device as active
   const nextActive = Object.values(state.devices)
     .find(d => d.approved && d.online);
 
@@ -213,6 +235,8 @@ socket.on("device:disconnect", ({ deviceId }) => {
     approved: true
   };
 
+  saveDevices();   
+
   if (state.activeDevice === deviceId) {
     const onlineApproved = Object.values(state.devices)
       .find(d => d.approved && d.online);
@@ -230,6 +254,7 @@ socket.on("device:rename", ({ deviceId, name }) => {
 
   if (state.devices[deviceId]) {
     state.devices[deviceId].name = name;
+    saveDevices();
   }
 
 
@@ -241,15 +266,14 @@ socket.on("device:remove", ({ deviceId }) => {
   const dev = state.devices[deviceId];
   if (!dev) return;
 
-  // Notify the mobile device that it has been removed
   if (dev.socketId) {
     io.to(dev.socketId).emit("pair:rejected");
   }
 
-  // Remove the device from the server state
   delete state.devices[deviceId];
+  
+  saveDevices();
 
-  // Update active device selection
   const nextActive = Object.values(state.devices)
     .find(d => d.approved && d.online);
 
@@ -265,7 +289,6 @@ socket.on("scan:barcode", (data = {}) => {
 
   const dev = state.devices[deviceId];
 
-  // ✅ Only allow approved devices
   if (!dev || !dev.approved) {
     console.log("❌ Scan rejected (not approved):", deviceId);
     return;
@@ -273,7 +296,6 @@ socket.on("scan:barcode", (data = {}) => {
 
   console.log("📦 SCAN RECEIVED FROM:", deviceId, barcode);
 
-  // ✅ Send to ALL desktops
   Object.values(state.desktops).forEach((desk) => {
     if (desk.socketId) {
       io.to(desk.socketId).emit("scan-received", {
@@ -307,6 +329,8 @@ socket.on("disconnect", () => {
       socketId: null,
       online: false
     };
+
+    saveDevices();
 
     if (state.activeDevice === dev.id) {
       const onlineApproved = Object.values(state.devices)
