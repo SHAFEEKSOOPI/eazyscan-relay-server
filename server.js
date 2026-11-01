@@ -114,6 +114,7 @@ app.post("/api/device/action", (req, res) => {
   if (action === "approve" || action === "reconnect") {
     dev.approved = true;
     dev.online = Boolean(dev.socketId);
+    if (action === "reconnect") dev.reconnectRequested = true;
     state.activeDevice = deviceId;
     if (dev.socketId) io.to(dev.socketId).emit(action === "reconnect" ? "device:reconnect" : "pair:approved", { ok: true, name: dev.name });
   }
@@ -180,6 +181,7 @@ socket.on("pair:request", (payload = {}) => {
       sessionId: currentDesktop.sessionId,
       desktopId: currentDesktop.id,
       online: true,
+      reconnectRequested: false,
       lastSeen: Date.now()
     };
     
