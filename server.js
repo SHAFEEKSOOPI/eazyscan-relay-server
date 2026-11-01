@@ -27,6 +27,12 @@ const state = {
 
 const fs = require("fs");
 const path = require("path");
+const DEVICES_FILE = path.join(__dirname, "devices.json");
+const DESKTOPS_FILE = path.join(__dirname, "desktops.json");
+function loadDesktops() { try { return fs.existsSync(DESKTOPS_FILE) ? JSON.parse(fs.readFileSync(DESKTOPS_FILE, "utf8")) : {}; } catch (_) { return {}; } }
+function saveDesktops() { try { fs.writeFileSync(DESKTOPS_FILE, JSON.stringify(state.desktops, null, 2)); } catch (err) { console.error("Error saving desktops:", err); } }
+state.devices = loadDevices();
+state.desktops = loadDesktops();
 
 // ================= HELPERS =================
 function loadDevices() {
@@ -83,6 +89,7 @@ function createDesktopSession(desktopId, name = "1BOS PWA") {
   const id = desktopId || `pwa_${crypto.randomBytes(8).toString("hex")}`;
   const sessionId = crypto.randomBytes(16).toString("hex");
   state.desktops[id] = { id, socketId: null, sessionId, name };
+  saveDesktops();
   return { desktopId: id, sessionId, qrUrl: `https://eazyscan.app/connect?session=${sessionId}` };
 }
 
@@ -128,6 +135,7 @@ socket.on("desktop:register", (payload = {}) => {
       socketId: socket.id,
       sessionId
     };
+    saveDesktops();
 
     socket.emit("desktop:registered", {
       ok: true,
