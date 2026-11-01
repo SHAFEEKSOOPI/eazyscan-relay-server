@@ -79,6 +79,40 @@ app.get("/", (req, res) => {
 
 const rejected = {};
 
+function createDesktopSession(desktopId, name = "1BOS PWA") {
+  const id = desktopId || `pwa_${crypto.randomBytes(8).toString("hex")}`;
+  const sessionId = crypto.randomBytes(16).toString("hex");
+  state.desktops[id] = { id, socketId: null, sessionId, name };
+  return { desktopId: id, sessionId, qrUrl: `https://eazyscan.app/connect?session=${sessionId}` };
+}
+
+app.post("/api/desktop/register", (req, res) => {
+  res.json({ ok: true, ...createDesktopSession(req.body?.desktopId, req.body?.name) });
+});
+
+app.get("/api/state", (req, res) => {
+  const sessionId = String(req.query.sessionId || "").trim();
+  const desktop = getDesktopBySession(sessionId);
+  if (!desktop) return res.status(401).json({ ok: false, error: "invalid-session" });
+  res.json({ ok: true, devices: state.devices, active: state.activeDevice, sessionId, qrUrl: `https://eazyscan.app/connect?session=${sessionId}` });
+});
+
+app.post("/api/device/action", (req, res) => {
+  const sessionId = String(req.body?.sessionId || "").trim();
+  const desktop = getDesktopBySession(sessionId);
+  if (!desktop) return res.status(401).json({ ok: false, error: "invalid-session" });
+  const { action, deviceId, name } = req.body || {};
+  const dev = state.devices[deviceId];
+  if (!dev && action !== "connect") return res.status(404).json({ ok: false, error: "device-not-found" });
+  if (action === "approve" || action === "reconnect") { dev.approved = true; dev.online = Boolean(dev.socketId); state.activeDevice = deviceId; if (dev.socketId) io.to(dev.socketId).emit("pair:approved", { ok: true, name: dev.name }); }
+  else if (action === "disconnect") { if (dev.socketId) io.to(dev.socketId).emit("force:disconnect"); state.devices[deviceId] = { ...dev, socketId: null, online: false, approved: true }; }
+  else if (action === "reject" || action === "remove") { if (dev.socketId) io.to(dev.socketId).emit("pair:rejected"); delete state.devices[deviceId]; }
+  else if (action === "rename" && name) dev.name = name;
+  else if (action !== "connect") return res.status(400).json({ ok: false, error: "invalid-action" });
+  saveDevices(); emitDevicesUpdate();
+  res.json({ ok: true, action, devices: state.devices, active: state.activeDevice });
+});
+
 // ================= SOCKET =================
 
 io.on("connection", (socket) => {
