@@ -144,7 +144,12 @@ socket.on("pair:request", (payload = {}) => {
   const id = deviceId || socket.id;
   const existing = state.devices[id];
 
-  const currentDesktop = Object.values(state.desktops).find(d => d.socketId);
+  // Approved devices may reconnect through a PWA-created virtual desktop
+  // session. Electron sessions have socketId; PWA sessions intentionally do
+  // not, but still own the persisted pairing session.
+  const currentDesktop = (existing?.desktopId && state.desktops[existing.desktopId])
+    || Object.values(state.desktops).find(d => d.socketId)
+    || Object.values(state.desktops)[0];
 
   if (existing && existing.approved) {
     if (!currentDesktop) {
