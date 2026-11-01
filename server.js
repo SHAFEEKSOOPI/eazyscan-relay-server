@@ -111,12 +111,11 @@ app.post("/api/device/action", (req, res) => {
   const { action, deviceId, name } = req.body || {};
   const dev = state.devices[deviceId];
   if (!dev && action !== "connect") return res.status(404).json({ ok: false, error: "device-not-found" });
-  if (action === "approve" || action === "reconnect") {
+  if (action === "approve") {
     dev.approved = true;
     dev.online = Boolean(dev.socketId);
-    if (action === "reconnect") dev.reconnectRequested = true;
     state.activeDevice = deviceId;
-    if (dev.socketId) io.to(dev.socketId).emit(action === "reconnect" ? "device:reconnect" : "pair:approved", { ok: true, name: dev.name });
+    if (dev.socketId) io.to(dev.socketId).emit("pair:approved", { ok: true, name: dev.name });
   }
   else if (action === "disconnect") {
     if (dev.socketId) io.to(dev.socketId).emit("force:disconnect");
@@ -181,7 +180,6 @@ socket.on("pair:request", (payload = {}) => {
       sessionId: currentDesktop.sessionId,
       desktopId: currentDesktop.id,
       online: true,
-      reconnectRequested: false,
       lastSeen: Date.now()
     };
     
@@ -298,21 +296,6 @@ socket.on("device:disconnect", ({ deviceId }) => {
 
   emitDevicesUpdate();
   console.log("DEVICE DISCONNECTED:", deviceId, state.devices[deviceId]);
-});
-
-  // ===== RECONNECT =====
-socket.on("device:reconnect", ({ deviceId }) => {
-  const dev = state.devices[deviceId];
-  if (!dev) return;
-
-  dev.approved = true;
-  dev.online = Boolean(dev.socketId);
-  dev.lastSeen = Date.now();
-  state.activeDevice = deviceId;
-  if (dev.socketId) io.to(dev.socketId).emit("device:reconnect", { ok: true, name: dev.name });
-  saveDevices();
-  emitDevicesUpdate();
-  console.log("DEVICE RECONNECT REQUEST:", deviceId);
 });
 
   // ===== RENAME =====
